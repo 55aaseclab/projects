@@ -1,6 +1,6 @@
 {
   "name": "projects",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "test:provider": "node --test provider-tests/praxis-provider.check.mjs"
   }
 }

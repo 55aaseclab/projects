@@ -7,3 +7,7 @@
 ```sh
 npm start -- --host 127.0.0.1 --port 4327
 ```
+
+## Praxis 集成
+
+应用维护的[供数合同](docs/PRAXIS-PROVIDER.md)提供按授权过滤、有来源依据的卡片与数据源描述，不增加 HTTP 元数据入口。使用 `npm run test:provider` 验证隔离供数测试。
