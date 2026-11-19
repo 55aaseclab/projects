@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>Projects</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main" data-zh="跳到项目内容">Skip to project</a>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Project navigation" data-zh-label="项目导航">
+      <div class="brand">Projects<span data-zh="项目协作">Project collaboration</span></div>
+      <div class="project-picker" id="project-picker" hidden>
+        <label for="project-select" data-zh="项目">Project</label>
+        <select id="project-select" aria-label="Choose project" data-zh-label="选择项目"></select>
+      </div>
+      <nav id="navigation" aria-label="Project views" data-zh-label="项目视图" hidden></nav>
+      <button type="button" id="language">简体中文</button>
+    </aside>
+    <main id="main" tabindex="-1" aria-busy="true">
+      <div id="notice" class="empty-state" role="status" data-zh="正在读取项目…">Loading project…</div>
+      <div id="project-content" hidden>
+        <div class="project-heading">
+          <div><h1 id="project-name"></h1><p id="project-description" class="project-description"></p></div>
+          <span id="project-status" class="project-status"></span>
+        </div>
+        <section id="view" aria-live="polite"></section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
