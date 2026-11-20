@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "id": "projects",
+  "version": "0.1.6",
+  "kind": "app",
+  "name": "Projects",
+  "description": "Research, engineering and collaboration",
+  "labels": {
+    "en": {
+      "name": "Projects",
+      "description": "Research, engineering and collaboration"
+    },
+    "zh": {
+      "name": "Projects",
+      "description": "科研、工程与项目协作"
+    }
+  },
+  "icon": "public/praxis-icon.svg",
+  "iconAliases": [
+    "/projects-icon.svg"
+  ],
+  "path": "/",
+  "port": 4327,
+  "launcher": false,
+  "documents": {
+    "prd": {
+      "en": "docs/PRD.en.md",
+      "zh": "docs/PRD.md"
+    }
+  }
+}
