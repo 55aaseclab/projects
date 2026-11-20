@@ -1,3 +1,4 @@
+import packageMetadata from '../package.json' with { type: 'json' };
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, symlinkSync, chmodSync, statSync } from 'node:fs';
@@ -158,6 +159,7 @@ test('managed HTTP serves the shared interface but refuses anonymous data and un
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
   assert.equal((await fetch(base + '/')).status, 200);
+  assert.equal((await (await fetch(base + '/health')).json()).version, packageMetadata.version);
   assert.deepEqual(await (await fetch(base + '/api/config')).json(), { managed: true, knowledgeBaseUrl: '/apps/knowledge/' });
   assert.equal((await fetch(base + '/api/projects')).status, 403);
   assert.equal((await fetch(base + '/api/projects/alpha')).status, 403);

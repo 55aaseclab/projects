@@ -1,3 +1,4 @@
+import packageMetadata from '../package.json' with { type: 'json' };
 import { createServer as httpServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -27,7 +28,7 @@ export function createServer({ store, business = null, managed = Boolean(busines
       const rawPath = request.url || '/';
       if (!rawPath.startsWith('/') || rawPath.startsWith('//') || /[\\\u0000-\u0020]/.test(rawPath) || rawPath.includes('%') || rawPath.includes('?') || rawPath.includes('#') || rawPath.split('/').some(part => part.startsWith('.'))) return json(response, 404, { code: 'NOT_FOUND' });
       if (request.method === 'GET' || request.method === 'HEAD') {
-        if (rawPath === '/health') return json(response, 200, { status: 'ok', managed });
+        if (rawPath === '/health') return json(response, 200, { status: 'ok', managed, version: packageMetadata.version });
         if (rawPath === '/api/config') return json(response, 200, { managed, knowledgeBaseUrl });
         if (rawPath === '/api/projects' || rawPath.startsWith('/api/projects/')) {
           if (managed) return json(response, 403, { code: 'BUSINESS_AUTH_REQUIRED' });

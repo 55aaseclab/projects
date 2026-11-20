@@ -28,3 +28,5 @@ npm start -- --host 127.0.0.1 --port 4327
 ## 应用自有容器构建
 
 `docker build -f Dockerfile.praxis -t praxis-projects:local .` 从本仓构建原生应用。按上文配置持久化 `PROJECTS_DATA_DIR`、受管签名密钥及明确的业务空间映射。Praxis 从 [`praxis-integration.mjs`](praxis-integration.mjs) 加载同一套原生路由、类型化工具、技能、存储与部署配方。[集成合同](praxis/README.md)
+
+原生 `/health` 响应的三段 `version` 与 `package.json`、`praxis-app.json` 一致；文档修订 3 属于独立的需求版本。

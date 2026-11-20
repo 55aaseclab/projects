@@ -30,3 +30,5 @@ Release 0.2.0 adds one project main, four team mains and continuing identity-own
 ## App-owned container build
 
 `docker build -f Dockerfile.praxis -t praxis-projects:local .` builds the native app from this repository. Configure its persistent `PROJECTS_DATA_DIR`, managed signing key and explicit business-space mapping as described above. Praxis loads [`praxis-integration.mjs`](praxis-integration.mjs) for the same native routes, typed tools, skills, storage and deployment recipes. [Integration contract](praxis/README.md)
+
+The native `/health` response reports the same three-component `version` as `package.json` and `praxis-app.json`; document revision 3 is a separate requirements identity.
