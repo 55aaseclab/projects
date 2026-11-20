@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "projects",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "kind": "app",
   "name": "Projects",
   "description": "Research, engineering and collaboration",

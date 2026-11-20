@@ -1,3 +1,5 @@
+import { PlanningStore } from './planning-store.mjs';
+import { PLANNING_ACTIONS } from './planning-schema.mjs';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, chmodSync, lstatSync, existsSync } from 'node:fs';
 import { dirname, isAbsolute } from 'node:path';
@@ -33,6 +35,7 @@ export class ProjectStore {
       CREATE TABLE IF NOT EXISTS project_requests(id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL,expires_at INTEGER NOT NULL);`);
     this.db.prepare("INSERT OR IGNORE INTO projects_meta VALUES('schema_version','1')").run();
     if (this.db.prepare("SELECT value FROM projects_meta WHERE key='schema_version'").get().value !== '1') throw new Error('The database schema version is unsupported.');
+    this.planning = new PlanningStore(this.db, { now, readProject: (spaceId, resourceId) => this.read(spaceId, resourceId) });
     for (const suffix of ['-wal', '-shm']) if (existsSync(file + suffix)) chmodSync(file + suffix, 0o600);
     } finally { process.umask(priorMask); }
   }
@@ -56,6 +59,7 @@ export class ProjectStore {
     return { spaceId, cursor: lastPageCursor, minCursor: 1, resetRequired, events };
   }
   execute(requestValue, claims) {
+    if (Object.hasOwn(PLANNING_ACTIONS, requestValue?.operation || '')) return this.planning.execute(requestValue, claims);
     const request = validateRequest(requestValue), action = ACTIONS[request.operation];
     if (claims.spaceId !== request.spaceId || claims.action !== action || request.resourceId && !allowed(claims, request.resourceId)) fail('FORBIDDEN', 403);
     if (claims.expiresAt <= this.now()) fail('INVALID_ASSERTION', 401);

@@ -1,4 +1,5 @@
-export const ACTIONS = Object.freeze({ list_projects: 'read', read_project: 'read', find_references: 'read', create_project: 'create', update_project: 'update', set_work_item: 'update', set_reference: 'update', events: 'read' });
+import { PLANNING_ACTIONS, validatePlanningRequest } from './planning-schema.mjs';
+export const ACTIONS = Object.freeze({ list_projects: 'read', read_project: 'read', find_references: 'read', create_project: 'create', update_project: 'update', set_work_item: 'update', set_reference: 'update', events: 'read', ...PLANNING_ACTIONS });
 export const DOMAINS = Object.freeze(['research', 'engineering', 'marketing', 'support']);
 export const identifier = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(value);
 export const slug = value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,79}$/.test(value);
@@ -90,6 +91,7 @@ export function validateProjectRelations(project) {
   if (project.status === 'completed' && project.workItems.some(item => item.status !== 'done')) fail('PROJECT_INCOMPLETE', 409);
 }
 export function validateRequest(request) {
+  if (Object.hasOwn(PLANNING_ACTIONS, request?.operation || '')) return validatePlanningRequest(request);
   fields(request, ['operation', 'spaceId'], ['resourceId', 'input', 'expectedRevision', 'idempotencyKey']);
   if (!Object.hasOwn(ACTIONS, request.operation) || !identifier(request.spaceId)) fail('INVALID_REQUEST');
   const action = ACTIONS[request.operation];

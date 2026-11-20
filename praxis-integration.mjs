@@ -1,0 +1,90 @@
+import { createWebIntegration } from './praxis/web.mjs';
+import { createStorageIntegration } from './praxis/storage.mjs';
+import { createDeploymentIntegration } from './praxis/deployment.mjs';
+import { createProjectSchemas } from './src/integration-schemas.mjs';
+import { ACTIONS, validateRequest } from './src/schema.mjs';
+import { applyPlanChanges } from './src/planning-store.mjs';
+import { PLANNING_ACTIONS, TEAMS } from './src/planning-schema.mjs';
+const invalidSubject = () => { throw Object.assign(new Error('INVALID_SUBJECT'), { code: 'INVALID_SUBJECT', status: 422 }); };
+const forbidden = () => { throw Object.assign(new Error('FORBIDDEN'), { code: 'FORBIDDEN', status: 403 }); };
+export function createIntegration({ z }) {
+  const schemas = createProjectSchemas(z), { projectIdSchema, projectRevisionSchema, projectCreateFields, projectUpdateSchema, projectWorkItemFields, projectWorkItemSchema, projectReferenceFields, projectReferenceSchema, projectReferenceLookupSchema } = schemas;
+  const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,199}$/), common = { spaceId: id }, mutation = { ...common, idempotencyKey: id };
+  const planningInput = (schema, args) => { const { spaceId, resourceId, expectedRevision, idempotencyKey, ...input } = args; const value = schema.safeParse(input); if (!value.success) throw Object.assign(new Error('INVALID_INPUT'), { code: 'INVALID_INPUT', status: 400 }); return value.data; };
+  const tools = [
+  { name: 'projects_list', appId: 'projects', operation: 'list_projects', action: 'read', description: 'List only project summaries authorized in one business space. One Projects application serves all project records; no code or project files are exposed.', schema: z.object(common).strict() },
+  { name: 'projects_read', appId: 'projects', operation: 'read_project', action: 'read', description: 'Read one authorized project, its current revision, typed work items and references. Read before changing any field.', schema: z.object({ ...common, resourceId: projectIdSchema }).strict() },
+  { name: 'projects_find_references', appId: 'projects', operation: 'find_references', action: 'read', description: 'Find only authorized projects in one space that reference the exact normalized Knowledge URL. Returns project and reference metadata, never copies Knowledge content or expands permissions.', schema: z.object({ ...common, url: z.string().max(2048) }).strict(), input: args => planningInput(projectReferenceLookupSchema, args) },
+  { name: 'projects_create', appId: 'projects', operation: 'create_project', action: 'create', description: 'Create exactly one authorized project ID using name, goal and optional description and owner. Creation never creates a repository, source code or a new service. Use one stable idempotency key for this intent.', schema: z.object({ ...mutation, resourceId: projectIdSchema, ...projectCreateFields }).strict(), input: args => planningInput(z.object(projectCreateFields).strict(), args) },
+  { name: 'projects_update', appId: 'projects', operation: 'update_project', action: 'update', description: 'Update only the supplied name, goal, description, owner or project status. Requires the current revision and a stable idempotency key; never replaces work items, references or the entire record.', schema: z.object({ ...mutation, resourceId: projectIdSchema, expectedRevision: projectRevisionSchema, patch: projectUpdateSchema }).strict(), input: args => args.patch },
+  { name: 'projects_set_work_item', appId: 'projects', operation: 'set_work_item', action: 'update', description: 'Create or replace one typed work item by its stable ID in one authorized project. Supply every field: domain, status, optional-value tier/owner/dueDate, description, acceptance, dependsOn and referenceIds. Referenced work items and references must already exist; cycles and completing blocked work are rejected. Requires the current project revision and one stable idempotency key.', schema: z.object({ ...mutation, resourceId: projectIdSchema, expectedRevision: projectRevisionSchema, ...projectWorkItemFields }).strict(), input: args => planningInput(projectWorkItemSchema, args) },
+  { name: 'projects_set_reference', appId: 'projects', operation: 'set_reference', action: 'update', description: 'Create or replace one project reference. Knowledge references use a normalized /apps/knowledge/ path and retain Knowledge ownership; deliverables use HTTPS URLs. No content copying, file access, URL fetching or permission expansion occurs. Requires the current revision and one stable idempotency key.', schema: z.object({ ...mutation, resourceId: projectIdSchema, expectedRevision: projectRevisionSchema, ...projectReferenceFields }).strict(), input: args => planningInput(projectReferenceSchema, args) },  ];
+  const narrative = maximum => z.string().max(maximum).refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) && !/<\s*\/?[a-z][^>]*>/i.test(value));
+  const short = maximum => z.string().min(1).max(maximum).refine(value => !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value) && !/<\s*\/?[a-z][^>]*>/i.test(value)), nullableUser = id.nullable(), ids = z.array(id).max(100), team = z.enum(TEAMS), teams = z.array(team).max(4);
+  const reference = z.object({ id, title: short(160), kind: z.enum(['knowledge', 'deliverable']), url: z.string().max(2048), revision: short(200).nullable() }).strict();
+  const items = {
+    goal: z.object({ id, text: short(2000) }).strict(), criterion: z.object({ id, text: short(2000), goalIds: ids }).strict(),
+    question: z.object({ id, text: short(2000), ownerUserId: nullableUser, state: z.enum(['open', 'resolved']), decisionId: id.nullable() }).strict(),
+    decision: z.object({ id, text: short(2000), ownerUserId: nullableUser, referenceIds: ids }).strict(), reference,
+    milestone: z.object({ id, title: short(160), goalIds: ids, criterionIds: ids, status: z.enum(['todo', 'doing', 'review', 'done']), priority: z.enum(['P0', 'P1', 'P2']), commitment: z.enum(['tentative', 'committed']), ownerUserId: nullableUser, dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(), dependsOn: ids, order: z.number().int().nonnegative() }).strict(),
+  };
+  const change = z.discriminatedUnion('op', [z.object({ op: z.literal('set_prd_field'), field: z.enum(['problem', 'scope', 'outOfScope']), value: narrative(10000) }).strict(), ...Object.entries(items).flatMap(([kind, item]) => [z.object({ op: z.literal('upsert_' + kind), item }).strict(), z.object({ op: z.literal('remove_' + kind), id }).strict()])]);
+  const changes = z.array(change).min(1).max(200), rev = z.string().regex(/^(0|[1-9]\d{0,14})$/), reason = short(2000);
+  const inputs = {
+    read_planning: z.object({}).strict(), read_plan_history: z.object({ before: z.number().int().positive().optional(), limit: z.number().int().min(1).max(50).optional() }).strict(), read_plan_version: z.object({ versionId: rev }).strict(), read_planning_receipt: z.object({ key: id }).strict(),
+    set_planning_roles: z.object({ assignments: z.array(z.object({ userId: id, projectDecision: z.boolean(), teamDecision: teams, teams }).strict()).max(100), removeUserIds: ids }).strict(),
+    create_personal_branch: z.object({ teamId: team }).strict(), save_plan: z.object({ branchId: id, changes }).strict(),
+    adopt_plan: z.object({ branchId: id, changes, reason }).strict(), restore_plan: z.object({ branchId: id, versionId: rev, reason }).strict(),
+    sync_plan: z.object({ branchId: id, targetRevision: rev, resolutions: z.array(z.object({ key: short(240), choice: z.enum(['base', 'current', 'proposed']), reason }).strict()).max(200) }).strict(),
+    compare_plan: z.object({ sourceBranchId: id.optional(), targetBranchId: id.optional(), proposalId: id.optional(), changes: changes.optional() }).strict(),
+    submit_proposal: z.object({ sourceBranchId: id, targetBranchId: id, targetRevision: rev, changes: changes.optional(), purpose: reason, impact: reason, evidence: z.array(reference).max(100), predecessorId: id.optional() }).strict(),
+    withdraw_proposal: z.object({ proposalId: id, reason }).strict(), decide_proposal: z.object({ proposalId: id, decision: z.enum(['accept', 'reject']), reason, sourceRevision: rev, targetRevision: rev }).strict(),
+  };
+  const descriptions = {
+    read_planning: 'Read one authorized project planning hierarchy, current PRD/Roadmap, actual owned personal branches, effective role/action capabilities, frozen proposals and bounded history. Empty reads never create plans, members or decisions.',
+    read_plan_history: 'Read a bounded page of authorized immutable planning history, actor/reason and source/target version references. Pagination does not grant access to another personal draft.',
+    read_plan_version: 'Read one exact authorized immutable PRD/Roadmap version. Personal versions remain owner-scoped; historical reads never roll back execution facts.',
+    read_planning_receipt: 'Read metadata for one exact intent key owned by this user, client and grant. On uncertain writes, check this receipt and read the actual saved version before retrying the identical request with the same key.',
+    set_planning_roles: 'Assign or revoke bounded explicit project-decision/team-decision/team-member mappings. Requires current business-space owner/admin AND project-scoped manage_planning_roles; recipients must be enabled subjects with project read. Platform admin status and legacy owner text do not qualify.',
+    create_personal_branch: 'Create or reuse this authenticated user’s continuing branch in one authorized team. Requires explicit team membership and update. Never accepts an owner identity from input. expectedRevision is the current team head, including 0 for unadopted context.',
+    save_plan: 'Apply bounded typed text/item edits to your own personal plan at its exact branch revision. Preserve goals/criteria, milestones and sources; no arbitrary JSON paths or whole-record replacement. Read back the saved version. New IDs are team-qualified.',
+    compare_plan: 'Compare a permitted source draft or frozen proposal with its captured and current target. Shows exact base/current/proposed values and impacts. Upward team candidates are qualified item contributions, never an automatic project-prose replacement.',
+    sync_plan: 'Refresh parent context at exact source and target versions. Personal conflicts require an explicit base/current/proposed choice and reason; preserve independent changes and team-owned meaning. Refresh comparison before resubmission.',
+    adopt_plan: 'Explicitly adopt one unadopted project/team baseline with bounded reviewed content and a reason. Requires update, accept_plan and the designated target decision role. Nonempty problem/scope/goals/criteria and accountable commitments are checked atomically.',
+    submit_proposal: 'Freeze a nonempty target-scoped proposal with exact source/target revisions, purpose, impact and evidence. Personal branches target only their team; only an accepted team source can propose selected changes to project main. Keep one active submission per pair, immutable predecessors and qualified source identity.',
+    decide_proposal: 'Accept or reject the exact frozen proposal with a reason. Requires update, accept_plan and the designated target role; OAuth delegation explicitly includes accept_plan. Acceptance rechecks both current versions and commits one baseline/decision atomically. A stale or conflicting review produces no baseline write.',
+    withdraw_proposal: 'Withdraw your own exact current submission with a recorded reason. Changes no baseline and retains immutable content and decision history; resubmission uses a new linked proposal.',
+    restore_plan: 'Restore an authorized historical version into a new version of your owned personal draft, using its current revision and a reason. Compare and submit through the ordinary team/project workflow; never rewind baselines, delete history or undo execution facts.',
+  };
+  for (const [operation, input] of Object.entries(inputs)) {
+    const action = PLANNING_ACTIONS[operation], fields = { ...common, resourceId: projectIdSchema, ...(action === 'read' ? {} : { idempotencyKey: id, expectedRevision: rev }), ...input.shape };
+    tools.push({ name: 'projects_' + operation, operation, action, description: descriptions[operation], schema: z.object(fields).strict(), input: args => planningInput(input, args), ...(action === 'read' ? { readOnly: true } : {}), ...(['adopt_plan', 'decide_proposal'].includes(operation) ? { requiredActions: ['update'] } : {}) });
+  }
+  return { schemaVersion: 1, appId: 'projects', web: createWebIntegration(), storage: createStorageIntegration(), deployment: createDeploymentIntegration(), business: {
+    adapterId: 'projects', actionLabels: { accept_plan: { en: 'Accept planning decisions', zh: '接受计划决策' }, manage_planning_roles: { en: 'Manage planning roles', zh: '管理计划角色' } }, actionRoles: { manage_planning_roles: ['owner', 'admin'] }, actions: ['read', 'create', 'update', 'accept_plan', 'manage_planning_roles'], scopes: { 'projects:read': ['read'], 'projects:write': ['create', 'update'], 'projects:accept': ['accept_plan'], 'projects:roles': ['manage_planning_roles'] }, targetedCreate: true,
+    operations: Object.fromEntries(Object.entries(ACTIONS).map(([operation, action]) => [operation, { action, mutation: action !== 'read' }])), tools, schemas,
+    skill: { name: 'mcp-projects', path: 'skills/mcp-projects/SKILL.md' }, instructions: ['Projects planning uses one project main, four team mains and actual identity-owned personal branches. Read exact source/target versions, use bounded typed operations and stable intent keys, and perform actual version readback. Decision authority requires separately delegated acceptance plus the designated target role; no approval is implied by browsing.'],
+    authorizedReads: ['read_planning', 'compare_plan', 'read_plan_version'], collectActions: true, assertionFields: ['rolesManage', 'subjectsChecked'], assertionRules: { rolesManage: { kind: 'member-action', action: 'manage_planning_roles', roles: ['owner', 'admin'] }, subjectsChecked: { kind: 'subjects-read' } }, responseLimit: 8 * 1024 * 1024,
+    validateInvocation(request) { const { appId, ...native } = request; if (appId !== undefined && appId !== 'projects') forbidden(); validateRequest(native); },
+    async prepareInvocation(request, context) {
+      const rolesManage = ['owner', 'admin'].includes(context.membershipRole) && await context.hasAction('manage_planning_roles');
+      const assertion = { rolesManage };
+      if (request.operation === 'set_planning_roles') { if (!rolesManage) forbidden(); for (const assignment of request.input.assignments) if (!await context.canReadSubject(assignment.userId)) invalidSubject(); assertion.subjectsChecked = true; }
+      if (['adopt_plan', 'decide_proposal'].includes(request.operation) && (!await context.hasAction('accept_plan') || !await context.hasAction('update'))) forbidden();
+      const owners = (ACTIONS[request.operation] === 'read' ? [] : request.input?.changes || []).flatMap(change => change.item?.ownerUserId ? [change.item.ownerUserId] : []);
+      if (request.operation === 'restore_plan') { const { version } = await context.authorizedRead({ operation: 'read_plan_version', input: { versionId: request.input.versionId } }); owners.push(...[...version.plan.prd.questions, ...version.plan.prd.decisions, ...version.plan.roadmap.milestones].flatMap(item => item.ownerUserId ? [item.ownerUserId] : [])); }
+      if (request.operation === 'submit_proposal') { const comparison = await context.authorizedRead({ operation: 'compare_plan', input: { sourceBranchId: request.input.sourceBranchId, targetBranchId: request.input.targetBranchId, ...(request.input.changes ? { changes: request.input.changes } : {}) } }); owners.push(...comparison.changes.flatMap(change => change.proposed?.ownerUserId ? [change.proposed.ownerUserId] : [])); }
+      if (request.operation === 'decide_proposal' && request.input.decision === 'accept') {
+        const comparison = await context.authorizedRead({ operation: 'compare_plan', input: { proposalId: request.input.proposalId } });
+        if (comparison.source.revision !== request.input.sourceRevision || comparison.target.currentRevision !== request.input.targetRevision) throw Object.assign(new Error('STALE_REVIEW'), { status: 409, code: 'STALE_REVIEW' });
+        const current = await context.authorizedRead({ operation: 'read_planning', input: {} }), target = current.branches.find(branch => branch.id === comparison.target.branchId);
+        if (!target) forbidden(); const proposed = applyPlanChanges(target.plan, comparison.changes.map(change => change.change));
+        owners.push(...[...proposed.prd.questions, ...proposed.prd.decisions, ...proposed.roadmap.milestones].flatMap(item => item.ownerUserId ? [item.ownerUserId] : []));
+      }
+      for (const userId of new Set(owners)) if (!await context.canReadSubject(userId)) invalidSubject();
+      if (owners.length) assertion.subjectsChecked = true;
+      return { assertion };
+    },
+    workbench: { collection: { id: 'projects', operation: 'list_projects' }, async attention(context) { const records = await context.items('list_projects'), items = []; let partial = Boolean(records.partial); for (const entry of (records.spaces || []).flatMap(group => group.items.map(item => ({ ...item, spaceId: group.spaceId })))) { try { const value = await context.read({ operation: 'read_project', spaceId: entry.spaceId, resourceId: entry.resourceId }); if (value.project?.status !== 'active') continue; for (const item of value.project?.workItems || []) if ([context.actor?.userId, context.actor?.username].includes(item.owner) && item.status !== 'done') items.push({ spaceId: entry.spaceId, resourceId: entry.resourceId, itemId: item.id, domain: item.domain, title: item.title, date: item.dueDate, review: item.status === 'review' }); } catch { partial = true; } } return { items, partial }; } },
+  } };
+}

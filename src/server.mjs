@@ -9,7 +9,7 @@ import { identifier, slug } from './schema.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const defaultPublic = resolve(directory, '../public');
-const types = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/styles.css': ['styles.css', 'text/css; charset=utf-8'] };
+const types = { '/': ['index.html', 'text/html; charset=utf-8'], '/index.html': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/styles.css': ['styles.css', 'text/css; charset=utf-8'], '/planning.js': ['planning.js', 'text/javascript; charset=utf-8'] };
 const security = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'" };
 function json(response, status, result) {
   const body = JSON.stringify(result);
@@ -32,6 +32,8 @@ export function createServer({ store, business = null, managed = Boolean(busines
         if (rawPath === '/api/projects' || rawPath.startsWith('/api/projects/')) {
           if (managed) return json(response, 403, { code: 'BUSINESS_AUTH_REQUIRED' });
           if (rawPath === '/api/projects') return json(response, 200, { items: store.list(localSpace) });
+          const planning = /^\/api\/projects\/([a-z0-9][a-z0-9-]{0,79})\/planning$/.exec(rawPath);
+          if (planning) { store.read(localSpace, planning[1]); return json(response, 200, { spaceId: localSpace, resourceId: planning[1], ...store.planning.view([localSpace, planning[1]], { userId: null, action: 'read', actionsGranted: ['read'] }) }); }
           const id = rawPath.slice('/api/projects/'.length);
           if (!slug(id)) return json(response, 404, { code: 'NOT_FOUND' });
           const project = store.read(localSpace, id); return json(response, 200, { resourceId: id, revision: project.revision, project });
@@ -49,9 +51,9 @@ export function createServer({ store, business = null, managed = Boolean(busines
       if (!business) return json(response, 503, { code: 'BUSINESS_UNAVAILABLE' });
       if (!/^application\/json(?:\s*;|$)/i.test(request.headers['content-type'] || '')) return json(response, 415, { code: 'JSON_REQUIRED' });
       request.setTimeout(10000, () => { if (!response.headersSent) json(response, 408, { code: 'REQUEST_TIMEOUT' }); request.destroy(); });
-      if (Number(request.headers['content-length']) > 65536) { json(response, 413, { code: 'REQUEST_TOO_LARGE' }); request.resume(); return; }
+      if (Number(request.headers['content-length']) > 3 * 1024 * 1024) { json(response, 413, { code: 'REQUEST_TOO_LARGE' }); request.resume(); return; }
       const parts = []; let length = 0;
-      for await (const part of request) { length += part.length; if (length > 65536) { json(response, 413, { code: 'REQUEST_TOO_LARGE' }); request.resume(); return; } parts.push(part); }
+      for await (const part of request) { length += part.length; if (length > 3 * 1024 * 1024) { json(response, 413, { code: 'REQUEST_TOO_LARGE' }); request.resume(); return; } parts.push(part); }
       const result = business.handle(Buffer.concat(parts), request.headers['x-praxis-assertion']);
       json(response, 200, result);
     } catch (error) {

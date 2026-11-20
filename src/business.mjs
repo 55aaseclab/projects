@@ -12,11 +12,14 @@ export function verifyAssertion(raw, assertion, key, now = Date.now()) {
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) invalid();
   let claims;
   try { claims = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8')); } catch { invalid(); }
+  const extras = ['rolesManage', 'subjectsChecked', 'actionsGranted'];
   const keys = ['v', 'appId', 'userId', 'clientId', 'grantId', 'spaceId', 'action', 'resources', 'expiresAt', 'requestId', 'method', 'path', 'bodyHash'];
-  if (!object(claims) || Object.keys(claims).length !== keys.length || keys.some(name => !Object.hasOwn(claims, name))) invalid();
-  if (claims.v !== 1 || claims.appId !== 'projects' || claims.method !== 'POST' || claims.path !== '/api/business' || claims.bodyHash !== createHash('sha256').update(raw).digest('hex') || !['read', 'create', 'update'].includes(claims.action)) invalid();
+  if (!object(claims) || Object.keys(claims).some(name => !keys.includes(name) && !extras.includes(name)) || keys.some(name => !Object.hasOwn(claims, name))) invalid();
+  if (claims.v !== 1 || claims.appId !== 'projects' || claims.method !== 'POST' || claims.path !== '/api/business' || claims.bodyHash !== createHash('sha256').update(raw).digest('hex') || !['read', 'create', 'update', 'accept_plan', 'manage_planning_roles'].includes(claims.action)) invalid();
   if (!['userId', 'clientId', 'grantId', 'spaceId', 'requestId'].every(name => identifier(claims[name])) || !Number.isSafeInteger(claims.expiresAt) || claims.expiresAt <= now || claims.expiresAt > now + 30000) invalid();
   if (!Array.isArray(claims.resources) || !claims.resources.length || claims.resources.length > 1000 || new Set(claims.resources).size !== claims.resources.length || claims.resources.some(id => id !== '*' && !slug(id)) || claims.resources.includes('*') && claims.resources.length !== 1) invalid();
+  for (const name of ['rolesManage', 'subjectsChecked']) if (claims[name] !== undefined && typeof claims[name] !== 'boolean') invalid();
+  if (claims.actionsGranted !== undefined && (!Array.isArray(claims.actionsGranted) || new Set(claims.actionsGranted).size !== claims.actionsGranted.length || claims.actionsGranted.some(value => !['read', 'create', 'update', 'accept_plan', 'manage_planning_roles'].includes(value)))) invalid();
   return claims;
 }
 export class BusinessService {
